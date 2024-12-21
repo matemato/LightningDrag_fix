@@ -1,7 +1,7 @@
 # *************************************************************************
 # This file may have been modified by Bytedance Inc. (“Bytedance Inc.'s Mo-
 # difications”). All Bytedance Inc.'s Modifications are Copyright (2024) B-
-# ytedance Inc..  
+# ytedance Inc..
 # *************************************************************************
 
 import os
@@ -13,7 +13,7 @@ from PIL import Image
 from safetensors import safe_open
 from transformers import CLIPImageProcessor, CLIPVisionModelWithProjection
 
-from utils.utils import get_generator
+from drag_utils.utils import get_generator
 from models.attention_processor import IPAttnProcessor
 from models.resampler import Resampler
 
@@ -21,13 +21,20 @@ from models.resampler import Resampler
 class ImageProjModel(torch.nn.Module):
     """Projection Model"""
 
-    def __init__(self, cross_attention_dim=1024, clip_embeddings_dim=1024, clip_extra_context_tokens=4):
+    def __init__(
+        self,
+        cross_attention_dim=1024,
+        clip_embeddings_dim=1024,
+        clip_extra_context_tokens=4,
+    ):
         super().__init__()
 
         self.generator = None
         self.cross_attention_dim = cross_attention_dim
         self.clip_extra_context_tokens = clip_extra_context_tokens
-        self.proj = torch.nn.Linear(clip_embeddings_dim, self.clip_extra_context_tokens * cross_attention_dim)
+        self.proj = torch.nn.Linear(
+            clip_embeddings_dim, self.clip_extra_context_tokens * cross_attention_dim
+        )
         self.norm = torch.nn.LayerNorm(cross_attention_dim)
 
     def forward(self, image_embeds):
@@ -41,16 +48,17 @@ class ImageProjModel(torch.nn.Module):
 
 class MLPProjModel(torch.nn.Module):
     """SD model with image prompt"""
+
     def __init__(self, cross_attention_dim=1024, clip_embeddings_dim=1024):
         super().__init__()
-        
+
         self.proj = torch.nn.Sequential(
             torch.nn.Linear(clip_embeddings_dim, clip_embeddings_dim),
             torch.nn.GELU(),
             torch.nn.Linear(clip_embeddings_dim, cross_attention_dim),
-            torch.nn.LayerNorm(cross_attention_dim)
+            torch.nn.LayerNorm(cross_attention_dim),
         )
-        
+
     def forward(self, image_embeds):
         clip_extra_context_tokens = self.proj(image_embeds)
         return clip_extra_context_tokens
@@ -67,9 +75,9 @@ class IPAdapter:
         self.set_ip_adapter()
 
         # load image encoder
-        self.image_encoder = CLIPVisionModelWithProjection.from_pretrained(self.image_encoder_path).to(
-            self.device, dtype=torch.float16
-        )
+        self.image_encoder = CLIPVisionModelWithProjection.from_pretrained(
+            self.image_encoder_path
+        ).to(self.device, dtype=torch.float16)
         self.clip_image_processor = CLIPImageProcessor()
         # image proj model
         self.image_proj_model = self.init_proj()
@@ -88,7 +96,11 @@ class IPAdapter:
         unet = self.pipe.unet
         attn_procs = {}
         for name in unet.attn_processors.keys():
-            cross_attention_dim = None if name.endswith("attn1.processor") else unet.config.cross_attention_dim
+            cross_attention_dim = (
+                None
+                if name.endswith("attn1.processor")
+                else unet.config.cross_attention_dim
+            )
             if name.startswith("mid_block"):
                 hidden_size = unet.config.block_out_channels[-1]
             elif name.startswith("up_blocks"):
@@ -110,9 +122,13 @@ class IPAdapter:
         if hasattr(self.pipe, "controlnet"):
             if isinstance(self.pipe.controlnet, MultiControlNetModel):
                 for controlnet in self.pipe.controlnet.nets:
-                    controlnet.set_attn_processor(CNAttnProcessor(num_tokens=self.num_tokens))
+                    controlnet.set_attn_processor(
+                        CNAttnProcessor(num_tokens=self.num_tokens)
+                    )
             else:
-                self.pipe.controlnet.set_attn_processor(CNAttnProcessor(num_tokens=self.num_tokens))
+                self.pipe.controlnet.set_attn_processor(
+                    CNAttnProcessor(num_tokens=self.num_tokens)
+                )
 
     def load_ip_adapter(self):
         if os.path.splitext(self.ip_ckpt)[-1] == ".safetensors":
@@ -120,9 +136,13 @@ class IPAdapter:
             with safe_open(self.ip_ckpt, framework="pt", device="cpu") as f:
                 for key in f.keys():
                     if key.startswith("image_proj."):
-                        state_dict["image_proj"][key.replace("image_proj.", "")] = f.get_tensor(key)
+                        state_dict["image_proj"][key.replace("image_proj.", "")] = (
+                            f.get_tensor(key)
+                        )
                     elif key.startswith("ip_adapter."):
-                        state_dict["ip_adapter"][key.replace("ip_adapter.", "")] = f.get_tensor(key)
+                        state_dict["ip_adapter"][key.replace("ip_adapter.", "")] = (
+                            f.get_tensor(key)
+                        )
         else:
             state_dict = torch.load(self.ip_ckpt, map_location="cpu")
         self.image_proj_model.load_state_dict(state_dict["image_proj"])
@@ -134,12 +154,18 @@ class IPAdapter:
         if pil_image is not None:
             if isinstance(pil_image, Image.Image):
                 pil_image = [pil_image]
-            clip_image = self.clip_image_processor(images=pil_image, return_tensors="pt").pixel_values
-            clip_image_embeds = self.image_encoder(clip_image.to(self.device, dtype=torch.float16)).image_embeds
+            clip_image = self.clip_image_processor(
+                images=pil_image, return_tensors="pt"
+            ).pixel_values
+            clip_image_embeds = self.image_encoder(
+                clip_image.to(self.device, dtype=torch.float16)
+            ).image_embeds
         else:
             clip_image_embeds = clip_image_embeds.to(self.device, dtype=torch.float16)
         image_prompt_embeds = self.image_proj_model(clip_image_embeds)
-        uncond_image_prompt_embeds = self.image_proj_model(torch.zeros_like(clip_image_embeds))
+        uncond_image_prompt_embeds = self.image_proj_model(
+            torch.zeros_like(clip_image_embeds)
+        )
         return image_prompt_embeds, uncond_image_prompt_embeds
 
     def set_scale(self, scale):
@@ -170,7 +196,9 @@ class IPAdapter:
         if prompt is None:
             prompt = "best quality, high quality"
         if negative_prompt is None:
-            negative_prompt = "monochrome, lowres, bad anatomy, worst quality, low quality"
+            negative_prompt = (
+                "monochrome, lowres, bad anatomy, worst quality, low quality"
+            )
 
         if not isinstance(prompt, List):
             prompt = [prompt] * num_prompts
@@ -182,9 +210,15 @@ class IPAdapter:
         )
         bs_embed, seq_len, _ = image_prompt_embeds.shape
         image_prompt_embeds = image_prompt_embeds.repeat(1, num_samples, 1)
-        image_prompt_embeds = image_prompt_embeds.view(bs_embed * num_samples, seq_len, -1)
-        uncond_image_prompt_embeds = uncond_image_prompt_embeds.repeat(1, num_samples, 1)
-        uncond_image_prompt_embeds = uncond_image_prompt_embeds.view(bs_embed * num_samples, seq_len, -1)
+        image_prompt_embeds = image_prompt_embeds.view(
+            bs_embed * num_samples, seq_len, -1
+        )
+        uncond_image_prompt_embeds = uncond_image_prompt_embeds.repeat(
+            1, num_samples, 1
+        )
+        uncond_image_prompt_embeds = uncond_image_prompt_embeds.view(
+            bs_embed * num_samples, seq_len, -1
+        )
 
         with torch.inference_mode():
             prompt_embeds_, negative_prompt_embeds_ = self.pipe.encode_prompt(
@@ -195,7 +229,9 @@ class IPAdapter:
                 negative_prompt=negative_prompt,
             )
             prompt_embeds = torch.cat([prompt_embeds_, image_prompt_embeds], dim=1)
-            negative_prompt_embeds = torch.cat([negative_prompt_embeds_, uncond_image_prompt_embeds], dim=1)
+            negative_prompt_embeds = torch.cat(
+                [negative_prompt_embeds_, uncond_image_prompt_embeds], dim=1
+            )
 
         generator = get_generator(seed, self.device)
 
@@ -232,19 +268,29 @@ class IPAdapterXL(IPAdapter):
         if prompt is None:
             prompt = "best quality, high quality"
         if negative_prompt is None:
-            negative_prompt = "monochrome, lowres, bad anatomy, worst quality, low quality"
+            negative_prompt = (
+                "monochrome, lowres, bad anatomy, worst quality, low quality"
+            )
 
         if not isinstance(prompt, List):
             prompt = [prompt] * num_prompts
         if not isinstance(negative_prompt, List):
             negative_prompt = [negative_prompt] * num_prompts
 
-        image_prompt_embeds, uncond_image_prompt_embeds = self.get_image_embeds(pil_image)
+        image_prompt_embeds, uncond_image_prompt_embeds = self.get_image_embeds(
+            pil_image
+        )
         bs_embed, seq_len, _ = image_prompt_embeds.shape
         image_prompt_embeds = image_prompt_embeds.repeat(1, num_samples, 1)
-        image_prompt_embeds = image_prompt_embeds.view(bs_embed * num_samples, seq_len, -1)
-        uncond_image_prompt_embeds = uncond_image_prompt_embeds.repeat(1, num_samples, 1)
-        uncond_image_prompt_embeds = uncond_image_prompt_embeds.view(bs_embed * num_samples, seq_len, -1)
+        image_prompt_embeds = image_prompt_embeds.view(
+            bs_embed * num_samples, seq_len, -1
+        )
+        uncond_image_prompt_embeds = uncond_image_prompt_embeds.repeat(
+            1, num_samples, 1
+        )
+        uncond_image_prompt_embeds = uncond_image_prompt_embeds.view(
+            bs_embed * num_samples, seq_len, -1
+        )
 
         with torch.inference_mode():
             (
@@ -259,10 +305,12 @@ class IPAdapterXL(IPAdapter):
                 negative_prompt=negative_prompt,
             )
             prompt_embeds = torch.cat([prompt_embeds, image_prompt_embeds], dim=1)
-            negative_prompt_embeds = torch.cat([negative_prompt_embeds, uncond_image_prompt_embeds], dim=1)
+            negative_prompt_embeds = torch.cat(
+                [negative_prompt_embeds, uncond_image_prompt_embeds], dim=1
+            )
 
         self.generator = get_generator(seed, self.device)
-        
+
         images = self.pipe(
             prompt_embeds=prompt_embeds,
             negative_prompt_embeds=negative_prompt_embeds,
@@ -296,9 +344,13 @@ class IPAdapterPlus(IPAdapter):
     def get_image_embeds(self, pil_image=None, clip_image_embeds=None):
         if isinstance(pil_image, Image.Image):
             pil_image = [pil_image]
-        clip_image = self.clip_image_processor(images=pil_image, return_tensors="pt").pixel_values
+        clip_image = self.clip_image_processor(
+            images=pil_image, return_tensors="pt"
+        ).pixel_values
         clip_image = clip_image.to(self.device, dtype=torch.float16)
-        clip_image_embeds = self.image_encoder(clip_image, output_hidden_states=True).hidden_states[-2]
+        clip_image_embeds = self.image_encoder(
+            clip_image, output_hidden_states=True
+        ).hidden_states[-2]
         image_prompt_embeds = self.image_proj_model(clip_image_embeds)
         uncond_clip_image_embeds = self.image_encoder(
             torch.zeros_like(clip_image), output_hidden_states=True
@@ -338,9 +390,13 @@ class IPAdapterPlusXL(IPAdapter):
     def get_image_embeds(self, pil_image):
         if isinstance(pil_image, Image.Image):
             pil_image = [pil_image]
-        clip_image = self.clip_image_processor(images=pil_image, return_tensors="pt").pixel_values
+        clip_image = self.clip_image_processor(
+            images=pil_image, return_tensors="pt"
+        ).pixel_values
         clip_image = clip_image.to(self.device, dtype=torch.float16)
-        clip_image_embeds = self.image_encoder(clip_image, output_hidden_states=True).hidden_states[-2]
+        clip_image_embeds = self.image_encoder(
+            clip_image, output_hidden_states=True
+        ).hidden_states[-2]
         image_prompt_embeds = self.image_proj_model(clip_image_embeds)
         uncond_clip_image_embeds = self.image_encoder(
             torch.zeros_like(clip_image), output_hidden_states=True
@@ -366,19 +422,29 @@ class IPAdapterPlusXL(IPAdapter):
         if prompt is None:
             prompt = "best quality, high quality"
         if negative_prompt is None:
-            negative_prompt = "monochrome, lowres, bad anatomy, worst quality, low quality"
+            negative_prompt = (
+                "monochrome, lowres, bad anatomy, worst quality, low quality"
+            )
 
         if not isinstance(prompt, List):
             prompt = [prompt] * num_prompts
         if not isinstance(negative_prompt, List):
             negative_prompt = [negative_prompt] * num_prompts
 
-        image_prompt_embeds, uncond_image_prompt_embeds = self.get_image_embeds(pil_image)
+        image_prompt_embeds, uncond_image_prompt_embeds = self.get_image_embeds(
+            pil_image
+        )
         bs_embed, seq_len, _ = image_prompt_embeds.shape
         image_prompt_embeds = image_prompt_embeds.repeat(1, num_samples, 1)
-        image_prompt_embeds = image_prompt_embeds.view(bs_embed * num_samples, seq_len, -1)
-        uncond_image_prompt_embeds = uncond_image_prompt_embeds.repeat(1, num_samples, 1)
-        uncond_image_prompt_embeds = uncond_image_prompt_embeds.view(bs_embed * num_samples, seq_len, -1)
+        image_prompt_embeds = image_prompt_embeds.view(
+            bs_embed * num_samples, seq_len, -1
+        )
+        uncond_image_prompt_embeds = uncond_image_prompt_embeds.repeat(
+            1, num_samples, 1
+        )
+        uncond_image_prompt_embeds = uncond_image_prompt_embeds.view(
+            bs_embed * num_samples, seq_len, -1
+        )
 
         with torch.inference_mode():
             (
@@ -393,7 +459,9 @@ class IPAdapterPlusXL(IPAdapter):
                 negative_prompt=negative_prompt,
             )
             prompt_embeds = torch.cat([prompt_embeds, image_prompt_embeds], dim=1)
-            negative_prompt_embeds = torch.cat([negative_prompt_embeds, uncond_image_prompt_embeds], dim=1)
+            negative_prompt_embeds = torch.cat(
+                [negative_prompt_embeds, uncond_image_prompt_embeds], dim=1
+            )
 
         generator = get_generator(seed, self.device)
 

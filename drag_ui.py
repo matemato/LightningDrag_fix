@@ -1,27 +1,49 @@
 # *************************************************************************
 # Copyright (2024) Bytedance Inc.
 #
-# Copyright (2024) LightningDrag Authors 
+# Copyright (2024) LightningDrag Authors
 #
-# Licensed under the Apache License, Version 2.0 (the "License"); 
-# you may not use this file except in compliance with the License. 
-# You may obtain a copy of the License at 
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
 #
-#     http://www.apache.org/licenses/LICENSE-2.0 
+#     http://www.apache.org/licenses/LICENSE-2.0
 #
-# Unless required by applicable law or agreed to in writing, software 
-# distributed under the License is distributed on an "AS IS" BASIS, 
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. 
-# See the License for the specific language governing permissions and 
-# limitations under the License. 
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 # *************************************************************************
 
-import gradio as gr
 import argparse
 
-from utils.ui_utils import LightningDragUI
+import gradio as gr
+from huggingface_hub import login, snapshot_download
 
-LENGTH=360 # length of the square area displaying/editing images
+from drag_utils.ui_utils import LightningDragUI
+
+api_token = "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"
+login(api_token)
+
+# snapshot_download(
+#     repo_id="stable-diffusion-v1-5/stable-diffusion-inpainting",
+#     local_dir="./checkpoints/stable-diffusion-inpainting",
+#     token=api_token,
+# )
+snapshot_download(
+    repo_id="Lykon/AbsoluteReality",
+    local_dir="./checkpoints/absolute_reality",
+    token=api_token,
+)
+# snapshot_download(
+#     repo_id="stablediffusionapi/anything-v5",
+#     local_dir="./checkpoints/anything",
+#     token=api_token,
+# )
+
+LENGTH = 360  # length of the square area displaying/editing images
+
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Simple example of a training script.")
@@ -33,6 +55,7 @@ def parse_args():
     parser.add_argument("--server_port", type=int, default=8888)
     args = parser.parse_args()
     return args
+
 
 args = parse_args()
 ui_obj = LightningDragUI(
@@ -46,7 +69,6 @@ ui_obj = LightningDragUI(
 print("finished loading models")
 
 with gr.Blocks() as demo:
-
     gr.HTML(
         """
         <div style="text-align: center; max-width: 1200px; margin: 20px auto;">
@@ -92,21 +114,28 @@ with gr.Blocks() as demo:
         1. Since our model is developed on SD-1.5, it inherits some failure cases such as blurry face, distorted hands, etc.
         2. We didn't do special training to keep face identity, so it might suffer person identity loss in large magnitude head-turning editing.
         </div>
-    """)
+    """
+    )
 
     # UI components for editing real images
-    mask = gr.State(value=None) # store mask
-    selected_points = gr.State([]) # store points
-    original_image = gr.State(value=None) # store original input image
+    mask = gr.State(value=None)  # store mask
+    selected_points = gr.State([])  # store points
+    original_image = gr.State(value=None)  # store original input image
     with gr.Row():
         display_size = LENGTH
         with gr.Column():
-            gr.Markdown("""<p style="text-align: center; font-size: 15px">Draw Mask</p>""")
-            canvas = gr.Image(type="numpy", tool="sketch",
-                show_label=True, height=display_size) # for mask painting
-            gr.Markdown("""<p style="text-align: center; font-size: 15px">Click Points</p>""")
-            input_image = gr.Image(type="numpy",
-                show_label=True, height=display_size, interactive=False) # for points clicking
+            gr.Markdown(
+                """<p style="text-align: center; font-size: 15px">Draw Mask</p>"""
+            )
+            canvas = gr.Image(
+                type="numpy", tool="sketch", show_label=True, height=display_size
+            )  # for mask painting
+            gr.Markdown(
+                """<p style="text-align: center; font-size: 15px">Click Points</p>"""
+            )
+            input_image = gr.Image(
+                type="numpy", show_label=True, height=display_size, interactive=False
+            )  # for points clicking
         with gr.Column():
             output_gallery = gr.Gallery(
                 label="Dragged Images",
@@ -114,10 +143,10 @@ with gr.Blocks() as demo:
                 elem_id="gallery",
                 columns=[2],
                 rows=[2],
-                height=2*LENGTH,
-                width=2*LENGTH,
+                height=2 * LENGTH,
+                width=2 * LENGTH,
                 object_fit="contain",
-                )
+            )
             with gr.Row():
                 output1_button = gr.Button("Use Output1")
                 output2_button = gr.Button("Use Output2")
@@ -136,23 +165,19 @@ with gr.Blocks() as demo:
         default_guidance_scale_points = 4.0 if args.lcm_lora_path is None else 3.0
 
         num_inference_steps = gr.Number(
-            value=default_num_inference_steps,
-            label="Inference Steps",
-            precision=0)
+            value=default_num_inference_steps, label="Inference Steps", precision=0
+        )
         guidance_scale_points = gr.Number(
-            value=default_guidance_scale_points,
-            label="Guidance Scale for Points")
+            value=default_guidance_scale_points, label="Guidance Scale for Points"
+        )
         guidance_scale_decay = gr.Textbox(
-            value="inv_square",
-            label="Guidance Scale Decay",
-            visible=False)
+            value="inv_square", label="Guidance Scale Decay", visible=False
+        )
 
     # event definition
     # event for dragging user-input real image
     canvas.edit(
-        ui_obj.store_img,
-        [canvas],
-        [original_image, selected_points, input_image, mask]
+        ui_obj.store_img, [canvas], [original_image, selected_points, input_image, mask]
     )
     input_image.select(
         ui_obj.get_points,
@@ -160,82 +185,63 @@ with gr.Blocks() as demo:
         [input_image],
     )
     undo_button.click(
-        ui_obj.undo_points,
-        [original_image, mask],
-        [input_image, selected_points]
+        ui_obj.undo_points, [original_image, mask], [input_image, selected_points]
     )
     run_button.click(
         ui_obj.run_drag,
         [
-        seed,
-        original_image,
-        mask,
-        selected_points,
-        num_inference_steps,
-        guidance_scale_points,
-        guidance_scale_decay,
+            seed,
+            original_image,
+            mask,
+            selected_points,
+            num_inference_steps,
+            guidance_scale_points,
+            guidance_scale_decay,
         ],
-        [output_gallery]
+        [output_gallery],
     )
 
     clear_all_button.click(
         ui_obj.clear_all,
         [gr.Number(value=LENGTH, visible=False, precision=0)],
-        [canvas,
-        input_image,
-        output_gallery,
-        selected_points,
-        original_image,
-        mask]
+        [canvas, input_image, output_gallery, selected_points, original_image, mask],
     )
 
     output1_button.click(
         ui_obj.select_image,
-        [output_gallery, 
-        gr.Number(value=0, visible=False, precision=0),
-        gr.Number(value=LENGTH, visible=False, precision=0),],
-        [canvas,
-        input_image,
-        output_gallery,
-        selected_points,
-        original_image,
-        mask]
+        [
+            output_gallery,
+            gr.Number(value=0, visible=False, precision=0),
+            gr.Number(value=LENGTH, visible=False, precision=0),
+        ],
+        [canvas, input_image, output_gallery, selected_points, original_image, mask],
     )
     output2_button.click(
         ui_obj.select_image,
-        [output_gallery, 
-        gr.Number(value=1, visible=False, precision=0),
-        gr.Number(value=LENGTH, visible=False, precision=0),],
-        [canvas,
-        input_image,
-        output_gallery,
-        selected_points,
-        original_image,
-        mask]
+        [
+            output_gallery,
+            gr.Number(value=1, visible=False, precision=0),
+            gr.Number(value=LENGTH, visible=False, precision=0),
+        ],
+        [canvas, input_image, output_gallery, selected_points, original_image, mask],
     )
     output3_button.click(
         ui_obj.select_image,
-        [output_gallery, 
-        gr.Number(value=2, visible=False, precision=0),
-        gr.Number(value=LENGTH, visible=False, precision=0),],
-        [canvas,
-        input_image,
-        output_gallery,
-        selected_points,
-        original_image,
-        mask]
+        [
+            output_gallery,
+            gr.Number(value=2, visible=False, precision=0),
+            gr.Number(value=LENGTH, visible=False, precision=0),
+        ],
+        [canvas, input_image, output_gallery, selected_points, original_image, mask],
     )
     output4_button.click(
         ui_obj.select_image,
-        [output_gallery, 
-        gr.Number(value=3, visible=False, precision=0),
-        gr.Number(value=LENGTH, visible=False, precision=0),],
-        [canvas,
-        input_image,
-        output_gallery,
-        selected_points,
-        original_image,
-        mask]
+        [
+            output_gallery,
+            gr.Number(value=3, visible=False, precision=0),
+            gr.Number(value=LENGTH, visible=False, precision=0),
+        ],
+        [canvas, input_image, output_gallery, selected_points, original_image, mask],
     )
 
     # Examples
