@@ -40,10 +40,10 @@ from transformers import (
     CLIPVisionModelWithProjection,
 )
 
+from drag_utils.utils import torch_dfs
 from models.appearance_encoder import AppearanceEncoderModel
 from models.attention_processor import IPAttnProcessor, PointEmbeddingAttnProcessor
 from models.mutual_self_attention import ReferenceAttentionControl
-from utils.utils import torch_dfs
 
 
 def points_to_disk_map(points, H, W):
@@ -600,39 +600,21 @@ class LightningDragPipeline(StableDiffusionPipeline):
 
         # 7. Prepare latent variables, add noise on source latent up to t=999
         if latents is None:
-            src_latents = self.vae.encode(
+            latents = self.vae.encode(
                 ref_image.to(dtype=self.vae.dtype)
             ).latent_dist.sample()
-            src_latents = src_latents * self.vae.config.scaling_factor
-            noise = randn_tensor(
-                src_latents.shape,
-                generator=generator,
-                device=device,
-                dtype=src_latents.dtype,
-            )
+            latents = latents * self.vae.config.scaling_factor
 
-            latents = self.scheduler.add_noise(src_latents, noise, torch.tensor([999]))
+        init_latents = latents.detach().clone()
+        ref_image_latents = latents.detach().clone()
+        noise = randn_tensor(
+            latents.shape,
+            generator=generator,
+            device=device,
+            dtype=latents.dtype,
+        )
+        latents = self.scheduler.add_noise(latents, noise, torch.tensor([999]))
 
-            # 8. Prepare reference latent variables
-            ref_image_latents = self.prepare_ref_latents(
-                ref_image,
-                batch_size * num_images_per_prompt,
-                prompt_embeds.dtype,
-                device,
-                generator,
-                do_classifier_free_guidance=False,
-            )
-
-        else:
-            ref_image_latents = latents.detach().clone()
-            noise = randn_tensor(
-                latents.shape,
-                generator=generator,
-                device=device,
-                dtype=latents.dtype,
-            )
-            latents = self.scheduler.add_noise(latents, noise, torch.tensor([999]))
-            
         # 9. Prepare extra step kwargs. TODO: Logic should ideally just be moved out of the pipeline
         extra_step_kwargs = self.prepare_extra_step_kwargs(generator, eta)
 
@@ -782,6 +764,17 @@ class LightningDragPipeline(StableDiffusionPipeline):
                     noise_pred, t, latents, **extra_step_kwargs, return_dict=False
                 )[0]
 
+                ################
+                init_latents_proper = init_latents.detach().clone()
+                if i < len(timesteps) - 1:
+                    noise_timestep = timesteps[i + 1]
+                    init_latents_proper = self.scheduler.add_noise(
+                        init_latents_proper, noise, torch.tensor([noise_timestep])
+                    )
+
+                latents = (1 - mask) * init_latents_proper + mask * latents
+                ################
+
                 # call the callback, if provided
                 if i == len(timesteps) - 1 or (
                     (i + 1) > num_warmup_steps and (i + 1) % self.scheduler.order == 0
@@ -801,9 +794,11 @@ class LightningDragPipeline(StableDiffusionPipeline):
             latents.to(self.vae.dtype) / self.vae.config.scaling_factor,
             return_dict=False,
         )[0]
+
         image, has_nsfw_concept = self.run_safety_checker(
             image, device, prompt_embeds.dtype
         )
+
         do_denormalize = [True] * image.shape[0]
         image = self.image_processor.postprocess(
             image, output_type=output_type, do_denormalize=do_denormalize
