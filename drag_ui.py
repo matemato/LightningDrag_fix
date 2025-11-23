@@ -23,7 +23,7 @@ from huggingface_hub import login, snapshot_download
 
 from drag_utils.ui_utils import LightningDragUI
 
-api_token = "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"
+api_token = ""
 login(api_token)
 
 # snapshot_download(

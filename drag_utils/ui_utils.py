@@ -96,7 +96,7 @@ class LightningDragUI:
         )
         # Load vae
         if vae_path == "default":
-            vae = AutoencoderKL.from_pretrained(base_sd_path)
+            vae = AutoencoderKL.from_pretrained(base_sd_path, subfolder="vae")
         else:
             vae = AutoencoderKL.from_pretrained(vae_path)
 
@@ -282,7 +282,6 @@ class LightningDragUI:
             image,
             size=512,
         )
-
         image = image.resize((width, height), PIL.Image.LANCZOS)
         mask = cv2.resize(mask, (width, height), interpolation=cv2.INTER_NEAREST)
         image = np.array(image)
